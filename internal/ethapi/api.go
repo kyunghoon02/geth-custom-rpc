@@ -301,9 +301,100 @@ type BlockChainAPI struct {
 	b Backend
 }
 
+type AccountActivitySummary struct {
+	StartBlock    uint64   `json:"startBlock"`
+	EndBlock      uint64   `json:"endBlock"`
+	TxCountIn     uint64   `json:"txCountIn"`
+	TxCountOut    uint64   `json:"txCountOut"`
+	TotalValueIn  *big.Int `json:"totalValueIn"`
+	TotalValueOut *big.Int `json:"totalValueOut"`
+}
+
 // NewBlockChainAPI creates a new Ethereum blockchain API.
 func NewBlockChainAPI(b Backend) *BlockChainAPI {
 	return &BlockChainAPI{b}
+}
+
+// CustomRPC
+func (api *BlockChainAPI) GetAccountActivitySummary(ctx context.Context, address common.Address) (*AccountActivitySummary, error) {
+	// 최신 블록 찾기
+	latestHeader := api.b.CurrentHeader()
+	if latestHeader == nil {
+		return nil, fmt.Errorf("can not found latest Block")
+	}
+	// 목표 기간 설정
+	duration := uint64(14 * 24 * 60 * 60) // 14 days
+	if latestHeader.Time < duration {
+		return nil, fmt.Errorf("not enough data to calculate account activity")
+	}
+	targetTime := latestHeader.Time - duration
+
+	// start block 찾기
+	min := uint64(0)
+	max := latestHeader.Number.Uint64()
+
+	startBlock := max
+
+	for min <= max {
+		mid := (min + max) / 2
+		header, err := api.b.HeaderByNumber(ctx, rpc.BlockNumber(mid))
+		if err != nil {
+			return nil, err
+		}
+		if header.Time < targetTime {
+			min = mid + 1
+		} else {
+			startBlock = mid
+			max = mid - 1
+		}
+
+	}
+	// 결과 담을 변수
+	var txCountIn, txCountOut uint64
+	totalValueIn := new(big.Int)
+	totalValueOut := new(big.Int)
+
+	endBlock := latestHeader.Number.Uint64()
+	// 블록 순회
+	for i := startBlock; i <= endBlock; i++ {
+		// 블록 body 가져오기
+		block, err := api.b.BlockByNumber(ctx, rpc.BlockNumber(i))
+		if err != nil {
+			log.Error("cannot find block", "number", i, "err", err)
+			continue
+		}
+		//서명 복구용 singer 생성 (매 블록마다 필요)
+		signer := types.MakeSigner(api.b.ChainConfig(), block.Number(), block.Time())
+
+		for _, tx := range block.Transactions() {
+			//수신 (To == 나) 검사
+			if tx.To() != nil && *tx.To() == address {
+				txCountIn++
+
+				totalValueIn.Add(totalValueIn, tx.Value())
+			}
+			//송신 (From == 나) 검사
+			from, _ := types.Sender(signer, tx)
+			if err != nil {
+				log.Debug("failed to derive sender", "hash", tx.Hash(), "err", err)
+				continue
+			}
+			if from == address {
+				txCountOut++
+				totalValueOut.Add(totalValueOut, tx.Value())
+			}
+		}
+
+	}
+	return &AccountActivitySummary{
+		StartBlock:    startBlock,
+		EndBlock:      endBlock,
+		TxCountIn:     txCountIn,
+		TxCountOut:    txCountOut,
+		TotalValueIn:  totalValueIn,
+		TotalValueOut: totalValueOut,
+	}, nil
+
 }
 
 // ChainId is the EIP-155 replay-protection chain id for the current Ethereum chain config.
