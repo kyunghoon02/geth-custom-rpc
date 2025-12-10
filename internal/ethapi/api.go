@@ -332,8 +332,9 @@ func (api *BlockChainAPI) GetAccountActivitySummary(ctx context.Context, address
 	// start block 찾기
 	min := uint64(0)
 	max := latestHeader.Number.Uint64()
-
 	startBlock := max
+
+	searchStartBlock := time.Now()
 
 	for min <= max {
 		mid := (min + max) / 2
@@ -347,7 +348,8 @@ func (api *BlockChainAPI) GetAccountActivitySummary(ctx context.Context, address
 			startBlock = mid
 			max = mid - 1
 		}
-
+		binSearchEnd := time.Since(searchStartBlock)
+		log.Info("Binary search for start block", "mid", mid, "headerTime", header.Time, "targetTime", targetTime, "elapsed", binSearchEnd)
 	}
 	// 결과 담을 변수
 	var txCountIn, txCountOut uint64
@@ -355,6 +357,8 @@ func (api *BlockChainAPI) GetAccountActivitySummary(ctx context.Context, address
 	totalValueOut := new(big.Int)
 
 	endBlock := latestHeader.Number.Uint64()
+
+	startBlockScan := time.Now()
 	// 블록 순회
 	for i := startBlock; i <= endBlock; i++ {
 		// 블록 body 가져오기
@@ -384,7 +388,8 @@ func (api *BlockChainAPI) GetAccountActivitySummary(ctx context.Context, address
 				totalValueOut.Add(totalValueOut, tx.Value())
 			}
 		}
-
+		endBlockScan := time.Since(startBlockScan)
+		log.Info("Scanning blocks for account activity", "currentBlock", i, "startBlock", startBlock, "endBlock", endBlock, "elapsed", endBlockScan)
 	}
 	return &AccountActivitySummary{
 		StartBlock:    startBlock,
@@ -2021,21 +2026,31 @@ type DebugAPI struct {
 	b Backend
 }
 
+// MempoolStat 타입
+type MempoolStat struct {
+	Total           uint64       `json:"total"`
+	Pending         uint64       `json:"pending"`
+	Queued          uint64       `json:"queued"`
+	MinimumGasPrice *hexutil.Big `json:"minimumGasPrice"`
+	MaximumGasPrice *hexutil.Big `json:"maximumGasPrice"`
+	AverageGasPrice *hexutil.Big `json:"averageGasPrice"`
+}
+
 // NewDebugAPI creates a new instance of DebugAPI.
 func NewDebugAPI(b Backend) *DebugAPI {
 	return &DebugAPI{b: b}
 }
 
 // Custom Debug API
-func (api *DebugAPI) GetMempoolStats() map[string]uint64 {
+func (api *DebugAPI) GetMempoolStats() *MempoolStat {
+	// 트랜잭션 풀 통계 가져오기
 	stats, _ := api.b.TxPoolContent()
 	if stats == nil {
 		log.Warn("Tx pool stats not available")
 		return nil
 	}
-	result := make(map[string]uint64)
 
-	return nil
+	return &MempoolStat{}
 }
 
 // GetRawHeader retrieves the RLP encoding for a single header.
