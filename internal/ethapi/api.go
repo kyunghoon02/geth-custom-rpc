@@ -2026,6 +2026,18 @@ func NewDebugAPI(b Backend) *DebugAPI {
 	return &DebugAPI{b: b}
 }
 
+// Custom Debug API
+func (api *DebugAPI) GetMempoolStats() map[string]uint64 {
+	stats, _ := api.b.TxPoolContent()
+	if stats == nil {
+		log.Warn("Tx pool stats not available")
+		return nil
+	}
+	result := make(map[string]uint64)
+
+	return nil
+}
+
 // GetRawHeader retrieves the RLP encoding for a single header.
 func (api *DebugAPI) GetRawHeader(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (hexutil.Bytes, error) {
 	var hash common.Hash
