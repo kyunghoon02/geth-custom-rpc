@@ -71,7 +71,7 @@ curl -X POST \
   http://localhost:8545
 ```
 
-### 2. Mempool Statistics — `debug_getMempoolStats`
+### 2. Mempool Statistics — `debug_getMempoolStats` (WIP)
 
 A debugging/monitoring RPC that provides statistical insights into the current transaction pool.
 
