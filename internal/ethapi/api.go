@@ -23,6 +23,7 @@ import (
 	"fmt"
 	gomath "math"
 	"math/big"
+	"runtime/trace"
 	"strings"
 	"time"
 
@@ -317,6 +318,10 @@ func NewBlockChainAPI(b Backend) *BlockChainAPI {
 
 // CustomRPC
 func (api *BlockChainAPI) GetAccountActivitySummary(ctx context.Context, address common.Address) (*AccountActivitySummary, error) {
+	if trace.IsEnabled() {
+		r := trace.StartRegion(ctx, "eth_getAccountActivitySummary")
+		defer r.End()
+	}
 	// 최신 블록 찾기
 	latestHeader := api.b.CurrentHeader()
 	if latestHeader == nil {
@@ -348,9 +353,11 @@ func (api *BlockChainAPI) GetAccountActivitySummary(ctx context.Context, address
 			startBlock = mid
 			max = mid - 1
 		}
-		binSearchEnd := time.Since(searchStartBlock)
-		log.Info("Binary search for start block", "mid", mid, "headerTime", header.Time, "targetTime", targetTime, "elapsed", binSearchEnd)
 	}
+
+	binSearchEnd := time.Since(searchStartBlock)
+	log.Info("Binary search for start block completed", "startBlock", startBlock, "targetTime", targetTime, "elapsed", binSearchEnd)
+
 	// 결과 담을 변수
 	var txCountIn, txCountOut uint64
 	totalValueIn := new(big.Int)
@@ -367,6 +374,10 @@ func (api *BlockChainAPI) GetAccountActivitySummary(ctx context.Context, address
 			log.Error("cannot find block", "number", i, "err", err)
 			continue
 		}
+		if block == nil {
+			log.Error("cannot find block", "number", i)
+			continue
+		}
 		//서명 복구용 singer 생성 (매 블록마다 필요)
 		signer := types.MakeSigner(api.b.ChainConfig(), block.Number(), block.Time())
 
@@ -378,7 +389,7 @@ func (api *BlockChainAPI) GetAccountActivitySummary(ctx context.Context, address
 				totalValueIn.Add(totalValueIn, tx.Value())
 			}
 			//송신 (From == 나) 검사
-			from, _ := types.Sender(signer, tx)
+			from, err := types.Sender(signer, tx)
 			if err != nil {
 				log.Debug("failed to derive sender", "hash", tx.Hash(), "err", err)
 				continue
@@ -388,9 +399,9 @@ func (api *BlockChainAPI) GetAccountActivitySummary(ctx context.Context, address
 				totalValueOut.Add(totalValueOut, tx.Value())
 			}
 		}
-		endBlockScan := time.Since(startBlockScan)
-		log.Info("Scanning blocks for account activity", "currentBlock", i, "startBlock", startBlock, "endBlock", endBlock, "elapsed", endBlockScan)
 	}
+	endBlockScan := time.Since(startBlockScan)
+	log.Info("Block scan for account activity completed", "startBlock", startBlock, "endBlock", endBlock, "elapsed", endBlockScan)
 	return &AccountActivitySummary{
 		StartBlock:    startBlock,
 		EndBlock:      endBlock,
@@ -2028,9 +2039,12 @@ type DebugAPI struct {
 
 // MempoolStat 타입
 type MempoolStat struct {
-	Total           uint64       `json:"total"`
-	Pending         uint64       `json:"pending"`
-	Queued          uint64       `json:"queued"`
+	Total    uint64       `json:"total"`
+	Pending  uint64       `json:"pending"`
+	Queued   uint64       `json:"queued"`
+	Gasprice GasPriceStat `json:"gasprice"`
+}
+type GasPriceStat struct {
 	MinimumGasPrice *hexutil.Big `json:"minimumGasPrice"`
 	MaximumGasPrice *hexutil.Big `json:"maximumGasPrice"`
 	AverageGasPrice *hexutil.Big `json:"averageGasPrice"`
@@ -2044,13 +2058,61 @@ func NewDebugAPI(b Backend) *DebugAPI {
 // Custom Debug API
 func (api *DebugAPI) GetMempoolStats() *MempoolStat {
 	// 트랜잭션 풀 통계 가져오기
-	stats, _ := api.b.TxPoolContent()
-	if stats == nil {
-		log.Warn("Tx pool stats not available")
-		return nil
+	pending, queued := api.b.TxPoolContent()
+	// stats 초기화
+	stats := &MempoolStat{
+		Total:    uint64(len(pending) + len(queued)),
+		Pending:  uint64(len(pending)),
+		Queued:   uint64(len(queued)),
+		Gasprice: GasPriceStat{},
 	}
+	var totalGasPrice = new(big.Int)
+	var txCount uint64 = 0
 
-	return &MempoolStat{}
+	minGasPrice := new(big.Int)
+	maxGasPrice := new(big.Int)
+	firstTx := true
+
+	processTxs := func(txsMap map[common.Address][]*types.Transaction) uint64 {
+		var count uint64
+		for _, batch := range txsMap {
+			for _, tx := range batch {
+				count++
+				gp := tx.GasPrice()
+				// 가스비 총합 누적
+				totalGasPrice.Add(totalGasPrice, gp)
+				// Min/Max 갱신 로직
+				if firstTx {
+					minGasPrice.Set(gp)
+					maxGasPrice.Set(gp)
+					firstTx = false
+				} else {
+					if gp.Cmp(minGasPrice) < 0 {
+						minGasPrice.Set(gp)
+					}
+					if gp.Cmp(maxGasPrice) > 0 {
+						maxGasPrice.Set(gp)
+					}
+				}
+			}
+		}
+		return count
+	}
+	// Pending 처리
+	stats.Pending = processTxs(pending)
+	// Queued 처리
+	stats.Queued = processTxs(queued)
+	// 집계
+	stats.Total = stats.Pending + stats.Queued
+	txCount = stats.Total
+	// 평균 계산
+	if txCount > 0 {
+		avg := new(big.Int).Div(totalGasPrice, new(big.Int).SetUint64(txCount))
+		stats.Gasprice.MinimumGasPrice = (*hexutil.Big)(minGasPrice)
+		stats.Gasprice.MaximumGasPrice = (*hexutil.Big)(maxGasPrice)
+		stats.Gasprice.AverageGasPrice = (*hexutil.Big)(avg)
+	}
+	return stats
 }
 
 // GetRawHeader retrieves the RLP encoding for a single header.
