@@ -68,33 +68,43 @@ curl -X POST \
     "params":["0xYourAddressHere"],
     "id":1
   }' \
-  http://localhost:8545
+  http://localhost:18545
 ```
 
-### 2. Mempool Statistics — `debug_getMempoolStats` (WIP)
+### 2. Mempool Statistics — `debug_getMempoolStats`
 
 A debugging/monitoring RPC that provides statistical insights into the current transaction pool.
 
 - **Problem**
-
   - `txpool_content` returns detailed raw data → **too heavy** for quick checks.
   - `txpool_status` returns only counts → **too limited**.
   - Developers and node operators often need **gas price distribution** to understand congestion.
 
 - **Solution Implemented**
-
   - Directly accesses the internal TxPool backend.
-  - Iterates through `pending` and `queued` maps.
+  - Iterates through `pending` and `queued` stats.
   - Calculates:
-    - Total tx count
-    - Pending vs queued
+    - Total tx count (Pending / Queued)
     - Min / Max / Avg gas price
-  - _(Optional)_ simple gas price buckets
+
+- **Response Example**
+
+  ```json
+  {
+    "total": 1500,
+    "pending": 1200,
+    "queued": 300,
+    "gasprice": {
+      "minimumGasPrice": "0x3b9aca00",
+      "maximumGasPrice": "0x2540be400",
+      "averageGasPrice": "0x4a817c800"
+    }
+  }
+  ```
 
 - **Insight**
   Shows how to safely expose internal in-memory structures over RPC for:
   - Monitoring dashboards
-  - Alerting systems
   - Local debugging of network conditions
 
 **Usage**
@@ -108,7 +118,7 @@ curl -X POST \
     "params":[],
     "id":1
   }' \
-  http://localhost:8545
+  http://localhost:18545
 ```
 
 ---
@@ -134,9 +144,10 @@ curl -X POST \
      --dev \
      --http \
      --http.api eth,debug,txpool,net,web3 \
+     --http.port 18545 \
      --verbosity 3
    ```
-   Custom RPCs will then be available over HTTP on `http://localhost:8545`.
+   Custom RPCs will then be available over HTTP on `http://localhost:18545`.
 
 > **⚠️ Warning**  
 > These RPCs are experimental and can be very expensive on mainnet.  

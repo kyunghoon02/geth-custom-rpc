@@ -328,7 +328,7 @@ func (api *BlockChainAPI) GetAccountActivitySummary(ctx context.Context, address
 		return nil, fmt.Errorf("can not found latest Block")
 	}
 	// 목표 기간 설정
-	duration := uint64(14 * 24 * 60 * 60) // 14 days
+	duration := uint64(60 * 10) // 10 minutes (Reduced for verification)
 	if latestHeader.Time < duration {
 		return nil, fmt.Errorf("not enough data to calculate account activity")
 	}
@@ -2073,6 +2073,7 @@ func (api *DebugAPI) GetMempoolStats() *MempoolStat {
 	maxGasPrice := new(big.Int)
 	firstTx := true
 
+	startCalculation := time.Now()
 	processTxs := func(txsMap map[common.Address][]*types.Transaction) uint64 {
 		var count uint64
 		for _, batch := range txsMap {
@@ -2098,6 +2099,8 @@ func (api *DebugAPI) GetMempoolStats() *MempoolStat {
 		}
 		return count
 	}
+	endCalculation := time.Since(startCalculation)
+	log.Debug("Mempool stats calculation time", "duration", endCalculation)
 	// Pending 처리
 	stats.Pending = processTxs(pending)
 	// Queued 처리
@@ -2113,6 +2116,7 @@ func (api *DebugAPI) GetMempoolStats() *MempoolStat {
 		stats.Gasprice.AverageGasPrice = (*hexutil.Big)(avg)
 	}
 	return stats
+
 }
 
 // GetRawHeader retrieves the RLP encoding for a single header.
