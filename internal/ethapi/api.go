@@ -23,7 +23,6 @@ import (
 	"fmt"
 	gomath "math"
 	"math/big"
-	"runtime/trace"
 	"strings"
 	"time"
 
@@ -187,6 +186,87 @@ func NewTxPoolAPI(b Backend) *TxPoolAPI {
 	return &TxPoolAPI{b}
 }
 
+type MempoolTraffic struct {
+	Hash common.Hash     `json:"hash"`
+	From common.Address  `json:"from"`
+	To   *common.Address `json:"to"`
+
+	// [수정 1] Selector는 순수 Hex값만 가짐 (표준 준수)
+	Selector string `json:"selector"`
+	// [수정 2] 의도를 나타내는 별도 필드 추가 ("call", "deploy", "transfer")
+	TrafficType string `json:"trafficType"`
+
+	GasLimit    uint64       `json:"gasLimit"`
+	GasFeeCap   *hexutil.Big `json:"gasFeeCap"`
+	PriorityFee *hexutil.Big `json:"priorityFee"`
+	Value       *hexutil.Big `json:"value"`
+	Timestamp   int64        `json:"timestamp"`
+}
+
+type MempoolTrafficResponse struct {
+	Total int               `json:"total"`
+	Data  []*MempoolTraffic `json:"data"`
+}
+
+func (api *TxPoolAPI) GetMempoolTraffic(ctx context.Context) (*MempoolTrafficResponse, error) {
+	pending, _ := api.b.TxPoolContent()
+
+	// [피드백 반영 1] len(pending)은 Sender 수이므로 부정확함.
+	// 그냥 append에 맡기는 것이 부정확한 make보다 낫습니다.
+	var trafficList []*MempoolTraffic
+
+	now := time.Now().UnixMicro()
+
+	for fromAddr, batch := range pending {
+		for _, tx := range batch {
+			// Context 취소 체크
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+			}
+
+			// [피드백 반영 2] 로직 분리: Selector는 Hex만, 타입은 별도로
+			var selector string
+			var tType string
+
+			if tx.To() == nil {
+				tType = "deploy"
+				selector = "0x" // 배포는 selector 없음
+			} else if len(tx.Data()) >= 4 {
+				tType = "call"
+				selector = hexutil.Encode(tx.Data()[:4])
+			} else {
+				tType = "transfer"
+				selector = "0x" // 단순 송금은 selector 없음
+			}
+
+			stat := &MempoolTraffic{
+				Hash: tx.Hash(),
+				From: fromAddr,
+				To:   tx.To(),
+
+				Selector:    selector, // 이제 항상 0x... 형태 유지
+				TrafficType: tType,    // deploy/transfer/call 명시
+
+				GasLimit:    tx.Gas(),
+				GasFeeCap:   (*hexutil.Big)(tx.GasFeeCap()),
+				PriorityFee: (*hexutil.Big)(tx.GasTipCap()),
+				Value:       (*hexutil.Big)(tx.Value()),
+				Timestamp:   now,
+			}
+
+			trafficList = append(trafficList, stat)
+		}
+	}
+
+	// [피드백 반영 3] 정렬은 비용이 크므로 백엔드/DB에서 처리한다고 가정
+	return &MempoolTrafficResponse{
+		Total: len(trafficList),
+		Data:  trafficList,
+	}, nil
+}
+
 // Content returns the transactions contained within the transaction pool.
 func (api *TxPoolAPI) Content() map[string]map[string]map[string]*RPCTransaction {
 	pending, queue := api.b.TxPoolContent()
@@ -302,115 +382,9 @@ type BlockChainAPI struct {
 	b Backend
 }
 
-type AccountActivitySummary struct {
-	StartBlock    uint64   `json:"startBlock"`
-	EndBlock      uint64   `json:"endBlock"`
-	TxCountIn     uint64   `json:"txCountIn"`
-	TxCountOut    uint64   `json:"txCountOut"`
-	TotalValueIn  *big.Int `json:"totalValueIn"`
-	TotalValueOut *big.Int `json:"totalValueOut"`
-}
-
 // NewBlockChainAPI creates a new Ethereum blockchain API.
 func NewBlockChainAPI(b Backend) *BlockChainAPI {
 	return &BlockChainAPI{b}
-}
-
-// CustomRPC
-func (api *BlockChainAPI) GetAccountActivitySummary(ctx context.Context, address common.Address) (*AccountActivitySummary, error) {
-	if trace.IsEnabled() {
-		r := trace.StartRegion(ctx, "eth_getAccountActivitySummary")
-		defer r.End()
-	}
-	// 최신 블록 찾기
-	latestHeader := api.b.CurrentHeader()
-	if latestHeader == nil {
-		return nil, fmt.Errorf("can not found latest Block")
-	}
-	// 목표 기간 설정
-	duration := uint64(60 * 10) // 10 minutes (Reduced for verification)
-	if latestHeader.Time < duration {
-		return nil, fmt.Errorf("not enough data to calculate account activity")
-	}
-	targetTime := latestHeader.Time - duration
-
-	// start block 찾기
-	min := uint64(0)
-	max := latestHeader.Number.Uint64()
-	startBlock := max
-
-	searchStartBlock := time.Now()
-
-	for min <= max {
-		mid := (min + max) / 2
-		header, err := api.b.HeaderByNumber(ctx, rpc.BlockNumber(mid))
-		if err != nil {
-			return nil, err
-		}
-		if header.Time < targetTime {
-			min = mid + 1
-		} else {
-			startBlock = mid
-			max = mid - 1
-		}
-	}
-
-	binSearchEnd := time.Since(searchStartBlock)
-	log.Info("Binary search for start block completed", "startBlock", startBlock, "targetTime", targetTime, "elapsed", binSearchEnd)
-
-	// 결과 담을 변수
-	var txCountIn, txCountOut uint64
-	totalValueIn := new(big.Int)
-	totalValueOut := new(big.Int)
-
-	endBlock := latestHeader.Number.Uint64()
-
-	startBlockScan := time.Now()
-	// 블록 순회
-	for i := startBlock; i <= endBlock; i++ {
-		// 블록 body 가져오기
-		block, err := api.b.BlockByNumber(ctx, rpc.BlockNumber(i))
-		if err != nil {
-			log.Error("cannot find block", "number", i, "err", err)
-			continue
-		}
-		if block == nil {
-			log.Error("cannot find block", "number", i)
-			continue
-		}
-		//서명 복구용 singer 생성 (매 블록마다 필요)
-		signer := types.MakeSigner(api.b.ChainConfig(), block.Number(), block.Time())
-
-		for _, tx := range block.Transactions() {
-			//수신 (To == 나) 검사
-			if tx.To() != nil && *tx.To() == address {
-				txCountIn++
-
-				totalValueIn.Add(totalValueIn, tx.Value())
-			}
-			//송신 (From == 나) 검사
-			from, err := types.Sender(signer, tx)
-			if err != nil {
-				log.Debug("failed to derive sender", "hash", tx.Hash(), "err", err)
-				continue
-			}
-			if from == address {
-				txCountOut++
-				totalValueOut.Add(totalValueOut, tx.Value())
-			}
-		}
-	}
-	endBlockScan := time.Since(startBlockScan)
-	log.Info("Block scan for account activity completed", "startBlock", startBlock, "endBlock", endBlock, "elapsed", endBlockScan)
-	return &AccountActivitySummary{
-		StartBlock:    startBlock,
-		EndBlock:      endBlock,
-		TxCountIn:     txCountIn,
-		TxCountOut:    txCountOut,
-		TotalValueIn:  totalValueIn,
-		TotalValueOut: totalValueOut,
-	}, nil
-
 }
 
 // ChainId is the EIP-155 replay-protection chain id for the current Ethereum chain config.
