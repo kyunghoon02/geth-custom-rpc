@@ -167,6 +167,21 @@ Custom RPCs will then be available over HTTP on `http://localhost:28545`.
 
 ---
 
+## 📊 Benchmark (Local Dev)
+
+Results from `scripts/bench_rpc.ps1` on 2026-01-26 (localhost, Sepolia, warmup=5, iterations=30):
+
+| Method | Avg (ms) | Median (ms) | P95 (ms) | Min (ms) | Max (ms) | Avg Size (bytes) |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| txpool_getMempoolTraffic | 1.30 | 1.22 | 1.99 | 1.05 | 2.42 | 57 |
+| txpool_content | 1.35 | 1.32 | 1.84 | 1.07 | 2.35 | 60 |
+
+Notes:
+- Payload sizes were small because the mempool was mostly empty at measurement time.
+- Re-run the script under realistic load to get meaningful size/latency deltas.
+
+---
+
 ## 📚 Upstream Project
 
 For general Geth usage, documentation, and production guidance, please refer to the official repository:
