@@ -1,7 +1,7 @@
 ﻿# ⚙️ Mempool Radar Core (Geth Fork)
 
 **Mempool Radar Core** is a customized fork of [Go-Ethereum](https://github.com/ethereum/go-ethereum) (Geth) designed for real-time mempool analysis.
-It serves as the **Sensor Layer** within the [Mempool Radar Ecosystem](https://github.com/mempool-radar-ops).
+It serves as the **Sensor Layer** within the [Mempool Radar Ecosystem](https://github.com/kyunghoon02/mempool-radar).
 
 ### Custom RPC Implementation for Deep Analysis & Architecture Research
 

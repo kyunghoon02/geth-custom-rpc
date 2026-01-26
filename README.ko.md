@@ -1,7 +1,7 @@
 ﻿# ⚙️ Mempool Radar Core (Geth Fork)
 
 **Mempool Radar Core**는 [Go-Ethereum](https://github.com/ethereum/go-ethereum) (Geth)을 기반으로 한 커스텀 포크입니다.
-실시간 멤풀 분석을 위한 **Sensor Layer** 역할을 하며, [Mempool Radar Ecosystem](https://github.com/mempool-radar-ops)의 핵심 구성 요소입니다.
+실시간 멤풀 분석을 위한 **Sensor Layer** 역할을 하며, [Mempool Radar Ecosystem](https://github.com/kyunghoon02/mempool-radar)의 핵심 구성 요소입니다.
 
 ### 심층 분석과 아키텍처 연구를 위한 커스텀 RPC 구현
 
